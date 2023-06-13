@@ -57,7 +57,10 @@ where
             State::Idle(mut inner, mut internal_buf, fut_box) => {
                 internal_buf.clear();
                 let max_len = buf.remaining();
-                internal_buf.reserve(max_len);
+                let additional_cap = max_len.saturating_sub(internal_buf.capacity());
+                if additional_cap > 0 {
+                    internal_buf.reserve(additional_cap);
+                }
                 internal_buf.resize(max_len, 0);
 
                 let fut = async move {
