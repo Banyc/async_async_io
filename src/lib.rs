@@ -1,6 +1,8 @@
 use std::pin::Pin;
 
+use futures_core::Future;
 use read::{AsyncAsyncRead, PollRead};
+use reusable_box_future::ReusableBoxFuture;
 use tokio::io::{AsyncRead, AsyncWrite};
 use write::{AsyncAsyncWrite, PollWrite};
 
@@ -61,5 +63,18 @@ where
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Result<(), std::io::Error>> {
         Pin::new(&mut self.get_mut().write).poll_shutdown(cx)
+    }
+}
+
+fn box_fut<F, O>(fut: F, fut_box: Option<ReusableBoxFuture<O>>) -> ReusableBoxFuture<O>
+where
+    F: Future<Output = O> + Send + 'static,
+{
+    match fut_box {
+        Some(mut fut_box) => {
+            fut_box.set(fut);
+            fut_box
+        }
+        None => ReusableBoxFuture::new(fut),
     }
 }

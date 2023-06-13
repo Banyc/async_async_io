@@ -1,8 +1,10 @@
 use std::{io, task::Poll};
 
 use async_trait::async_trait;
-use futures_core::future::BoxFuture;
+use reusable_box_future::ReusableBoxFuture;
 use tokio::io::AsyncWrite;
+
+use crate::box_fut;
 
 #[async_trait]
 pub trait AsyncAsyncWrite {
@@ -19,22 +21,26 @@ pub struct PollWrite<W> {
 }
 
 enum WriteState<W> {
-    Idle(Vec<u8>),
-    Pending(BoxFuture<'static, (W, Vec<u8>, io::Result<usize>)>),
+    Idle(Vec<u8>, Option<WriteBoxFuture<W>>),
+    Pending(WriteBoxFuture<W>),
 }
 
+type WriteBoxFuture<W> = ReusableBoxFuture<(W, Vec<u8>, io::Result<usize>)>;
+
 enum EmptyResultState<W> {
-    Idle,
-    Pending(BoxFuture<'static, (W, io::Result<()>)>),
+    Idle(Option<EmptyResultBoxFuture<W>>),
+    Pending(EmptyResultBoxFuture<W>),
 }
+
+type EmptyResultBoxFuture<W> = ReusableBoxFuture<(W, io::Result<()>)>;
 
 impl<W> PollWrite<W> {
     pub fn new(write: W) -> Self {
         Self {
             inner: Some(write),
-            write_state: Some(WriteState::Idle(Vec::new())),
-            flush_state: Some(EmptyResultState::Idle),
-            shutdown_state: Some(EmptyResultState::Idle),
+            write_state: Some(WriteState::Idle(Vec::new(), None)),
+            flush_state: Some(EmptyResultState::Idle(None)),
+            shutdown_state: Some(EmptyResultState::Idle(None)),
         }
     }
 
@@ -50,10 +56,10 @@ where
     fn poll_empty_result_state(
         &mut self,
         cx: &mut std::task::Context<'_>,
-        mut fut: BoxFuture<'static, (W, io::Result<()>)>,
+        mut fut: EmptyResultBoxFuture<W>,
     ) -> (Poll<Result<(), io::Error>>, EmptyResultState<W>) {
         // Poll the future
-        let (inner, res) = match fut.as_mut().poll(cx) {
+        let (inner, res) = match fut.poll(cx) {
             Poll::Ready(res) => res,
             Poll::Pending => {
                 return (Poll::Pending, EmptyResultState::Pending(fut));
@@ -62,7 +68,7 @@ where
 
         // Update state
         self.inner = Some(inner);
-        (Poll::Ready(res), EmptyResultState::Idle)
+        (Poll::Ready(res), EmptyResultState::Idle(Some(fut)))
     }
 }
 
@@ -80,7 +86,7 @@ where
         // Get or create a future
         let state = this.write_state.take().unwrap();
         let mut fut = match state {
-            WriteState::Idle(mut internal_buf) => {
+            WriteState::Idle(mut internal_buf, fut_box) => {
                 internal_buf.clear();
                 internal_buf.extend_from_slice(buf);
                 let mut inner = this.inner.take().unwrap();
@@ -89,13 +95,13 @@ where
                     let res = inner.write(&internal_buf).await;
                     (inner, internal_buf, res)
                 };
-                Box::pin(fut)
+                box_fut(fut, fut_box)
             }
             WriteState::Pending(fut) => fut,
         };
 
         // Poll the future
-        let (inner, internal_buf, res) = match fut.as_mut().poll(cx) {
+        let (inner, internal_buf, res) = match fut.poll(cx) {
             Poll::Ready(res) => res,
             Poll::Pending => {
                 this.write_state = Some(WriteState::Pending(fut));
@@ -104,7 +110,7 @@ where
         };
 
         // Update state
-        this.write_state = Some(WriteState::Idle(internal_buf));
+        this.write_state = Some(WriteState::Idle(internal_buf, Some(fut)));
         this.inner = Some(inner);
         Ok(res?).into()
     }
@@ -118,14 +124,14 @@ where
         // Get or create a future
         let state = this.flush_state.take().unwrap();
         let fut = match state {
-            EmptyResultState::Idle => {
+            EmptyResultState::Idle(fut_box) => {
                 let mut inner = this.inner.take().unwrap();
 
                 let fut = async move {
                     let res = inner.flush().await;
                     (inner, res)
                 };
-                Box::pin(fut)
+                box_fut(fut, fut_box)
             }
             EmptyResultState::Pending(fut) => fut,
         };
@@ -146,14 +152,14 @@ where
         // Get or create a future
         let state = this.shutdown_state.take().unwrap();
         let fut = match state {
-            EmptyResultState::Idle => {
+            EmptyResultState::Idle(fut_box) => {
                 let mut inner = this.inner.take().unwrap();
 
                 let fut = async move {
                     let res = inner.shutdown().await;
                     (inner, res)
                 };
-                Box::pin(fut)
+                box_fut(fut, fut_box)
             }
             EmptyResultState::Pending(fut) => fut,
         };

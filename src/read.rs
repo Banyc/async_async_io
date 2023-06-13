@@ -1,8 +1,10 @@
 use std::{io, task::Poll};
 
 use async_trait::async_trait;
-use futures_core::future::BoxFuture;
+use reusable_box_future::ReusableBoxFuture;
 use tokio::io::AsyncRead;
+
+use crate::box_fut;
 
 #[async_trait]
 pub trait AsyncAsyncRead {
@@ -15,20 +17,22 @@ pub struct PollRead<R> {
 }
 
 enum State<R> {
-    Idle(R, Vec<u8>),
-    Pending(BoxFuture<'static, (R, Vec<u8>, io::Result<usize>)>),
+    Idle(R, Vec<u8>, Option<BoxFuture<R>>),
+    Pending(BoxFuture<R>),
 }
+
+type BoxFuture<R> = ReusableBoxFuture<(R, Vec<u8>, io::Result<usize>)>;
 
 impl<R> PollRead<R> {
     pub fn new(read: R) -> Self {
         Self {
-            state: Some(State::Idle(read, Vec::new())),
+            state: Some(State::Idle(read, Vec::new(), None)),
         }
     }
 
     pub fn into_inner(self) -> R {
         match self.state.unwrap() {
-            State::Idle(inner, _) => inner,
+            State::Idle(inner, _, _) => inner,
             State::Pending(_) => panic!(),
         }
     }
@@ -50,7 +54,7 @@ where
         // Get or create a future
         let state = this.state.take().unwrap();
         let mut fut = match state {
-            State::Idle(mut inner, mut internal_buf) => {
+            State::Idle(mut inner, mut internal_buf, fut_box) => {
                 internal_buf.clear();
                 let max_len = buf.remaining();
                 internal_buf.reserve(max_len);
@@ -60,13 +64,13 @@ where
                     let res = inner.read(&mut internal_buf[..max_len]).await;
                     (inner, internal_buf, res)
                 };
-                Box::pin(fut)
+                box_fut(fut, fut_box)
             }
             State::Pending(fut) => fut,
         };
 
         // Poll the future
-        let (inner, internal_buf, res) = match fut.as_mut().poll(cx) {
+        let (inner, internal_buf, res) = match fut.poll(cx) {
             Poll::Ready(res) => res,
             Poll::Pending => {
                 this.state = Some(State::Pending(fut));
@@ -78,12 +82,12 @@ where
         let len = match res {
             Ok(len) => len,
             Err(e) => {
-                this.state = Some(State::Idle(inner, internal_buf));
+                this.state = Some(State::Idle(inner, internal_buf, Some(fut)));
                 return Poll::Ready(Err(e));
             }
         };
         buf.put_slice(&internal_buf[..len]);
-        this.state = Some(State::Idle(inner, internal_buf));
+        this.state = Some(State::Idle(inner, internal_buf, Some(fut)));
         Ok(()).into()
     }
 }
