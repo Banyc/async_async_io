@@ -1,15 +1,35 @@
 use std::{io, task::Poll};
 
-use async_trait::async_trait;
 use reusable_box_future::ReusableBoxFuture;
 use tokio::io::AsyncRead;
 
 use crate::box_fut;
 
+#[cfg(not(feature = "no-async-trait"))]
+use async_trait::async_trait;
+#[cfg(not(feature = "no-async-trait"))]
 #[async_trait]
 pub trait AsyncAsyncRead {
     /// `buf` has a capacity. Don't read more than that.
     async fn read(&mut self, buf: &mut [u8]) -> io::Result<usize>;
+}
+
+#[cfg(feature = "no-async-trait")]
+use futures_core::Future;
+#[cfg(feature = "no-async-trait")]
+pub trait AsyncAsyncRead {
+    type ReadFuture<'async_trait>: Future<Output = io::Result<usize>> + Send + 'async_trait
+    where
+        Self: 'async_trait;
+
+    /// `buf` has a capacity. Don't read more than that.
+    fn read<'l0, 'l1, 'async_trait>(
+        &'l0 mut self,
+        buf: &'l1 mut [u8],
+    ) -> Self::ReadFuture<'async_trait>
+    where
+        'l0: 'async_trait,
+        'l1: 'async_trait;
 }
 
 pub struct PollRead<R> {
@@ -115,12 +135,35 @@ mod tests {
         }
     }
 
+    #[cfg(not(feature = "no-async-trait"))]
     #[async_trait]
     impl AsyncAsyncRead for AsyncReadBytes {
         async fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
             let len = std::io::Read::read(&mut self.reader, buf)?;
             print!("{}.", len);
             Ok(len)
+        }
+    }
+
+    #[cfg(feature = "no-async-trait")]
+    impl AsyncAsyncRead for AsyncReadBytes {
+        type ReadFuture<'async_trait> = impl Future<Output = io::Result<usize>> + Send + 'async_trait
+        where
+            Self: 'async_trait;
+
+        fn read<'l0, 'l1, 'async_trait>(
+            &'l0 mut self,
+            buf: &'l1 mut [u8],
+        ) -> Self::ReadFuture<'async_trait>
+        where
+            'l0: 'async_trait,
+            'l1: 'async_trait,
+        {
+            async move {
+                let len = std::io::Read::read(&mut self.reader, buf)?;
+                print!("{}.", len);
+                Ok(len)
+            }
         }
     }
 

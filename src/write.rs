@@ -1,16 +1,47 @@
 use std::{io, task::Poll};
 
-use async_trait::async_trait;
 use reusable_box_future::ReusableBoxFuture;
 use tokio::io::AsyncWrite;
 
 use crate::box_fut;
 
+#[cfg(not(feature = "no-async-trait"))]
+use async_trait::async_trait;
+#[cfg(not(feature = "no-async-trait"))]
 #[async_trait]
 pub trait AsyncAsyncWrite {
     async fn write(&mut self, buf: &[u8]) -> io::Result<usize>;
     async fn flush(&mut self) -> io::Result<()>;
     async fn shutdown(&mut self) -> io::Result<()>;
+}
+
+#[cfg(feature = "no-async-trait")]
+use futures_core::Future;
+#[cfg(feature = "no-async-trait")]
+pub trait AsyncAsyncWrite {
+    type WriteFuture<'async_trait>: Future<Output = io::Result<usize>> + Send + 'async_trait
+    where
+        Self: 'async_trait;
+    type FlushFuture<'async_trait>: Future<Output = io::Result<()>> + Send + 'async_trait
+    where
+        Self: 'async_trait;
+    type ShutdownFuture<'async_trait>: Future<Output = io::Result<()>> + Send + 'async_trait
+    where
+        Self: 'async_trait;
+
+    fn write<'l0, 'l1, 'async_trait>(
+        &'l0 mut self,
+        buf: &'l1 [u8],
+    ) -> Self::WriteFuture<'async_trait>
+    where
+        'l0: 'async_trait,
+        'l1: 'async_trait;
+    fn flush<'l0, 'async_trait>(&'l0 mut self) -> Self::FlushFuture<'async_trait>
+    where
+        'l0: 'async_trait;
+    fn shutdown<'l0, 'async_trait>(&'l0 mut self) -> Self::ShutdownFuture<'async_trait>
+    where
+        'l0: 'async_trait;
 }
 
 pub struct PollWrite<W> {
@@ -193,6 +224,7 @@ mod tests {
         }
     }
 
+    #[cfg(not(feature = "no-async-trait"))]
     #[async_trait]
     impl AsyncAsyncWrite for AsyncWriteBytes {
         async fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
@@ -206,6 +238,47 @@ mod tests {
 
         async fn shutdown(&mut self) -> io::Result<()> {
             Ok(())
+        }
+    }
+
+    #[cfg(feature = "no-async-trait")]
+    impl AsyncAsyncWrite for AsyncWriteBytes {
+        type WriteFuture<'async_trait> = impl Future<Output = io::Result<usize>> + Send + 'async_trait
+        where
+            Self: 'async_trait;
+        type FlushFuture<'async_trait> = impl Future<Output = io::Result<()>> + Send + 'async_trait
+        where
+            Self: 'async_trait;
+        type ShutdownFuture<'async_trait> = impl Future<Output = io::Result<()>> + Send + 'async_trait
+        where
+            Self: 'async_trait;
+
+        fn write<'l0, 'l1, 'async_trait>(
+            &'l0 mut self,
+            buf: &'l1 [u8],
+        ) -> Self::WriteFuture<'async_trait>
+        where
+            'l0: 'async_trait,
+            'l1: 'async_trait,
+        {
+            async move {
+                print!("{}.", buf.len());
+                std::io::Write::write(&mut self.writer, buf)
+            }
+        }
+
+        fn flush<'l0, 'async_trait>(&'l0 mut self) -> Self::FlushFuture<'async_trait>
+        where
+            'l0: 'async_trait,
+        {
+            async move { std::io::Write::flush(&mut self.writer) }
+        }
+
+        fn shutdown<'l0, 'async_trait>(&'l0 mut self) -> Self::ShutdownFuture<'async_trait>
+        where
+            'l0: 'async_trait,
+        {
+            async move { Ok(()) }
         }
     }
 

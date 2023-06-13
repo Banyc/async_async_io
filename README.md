@@ -2,6 +2,12 @@
 
 Currently, only for `tokio`.
 
+To get rid of the `Box` in the async trait calls:
+
+- use nightly channel;
+- enable the feature `"no-async-trait"`;
+- look into the tests in `src/read.rs` and `src/write.rs` to see how to implement the traits.
+
 ## Usage
 
 ### `AsyncAsyncRead`

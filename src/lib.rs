@@ -1,3 +1,5 @@
+#![cfg_attr(feature = "no-async-trait", feature(impl_trait_in_assoc_type))]
+
 use std::pin::Pin;
 
 use futures_core::Future;
