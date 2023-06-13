@@ -1,4 +1,4 @@
-use std::{io, ops::DerefMut, task::Poll};
+use std::{io, task::Poll};
 
 use async_trait::async_trait;
 use futures_core::future::BoxFuture;
@@ -48,15 +48,15 @@ where
     W: AsyncAsyncWrite + Unpin + Send + 'static,
 {
     fn poll_empty_result_state(
-        mut self: std::pin::Pin<&mut Self>,
+        &mut self,
         cx: &mut std::task::Context<'_>,
         mut fut: BoxFuture<'static, (W, io::Result<()>)>,
-    ) -> (std::task::Poll<Result<(), io::Error>>, EmptyResultState<W>) {
+    ) -> (Poll<Result<(), io::Error>>, EmptyResultState<W>) {
         // Poll the future
         let (inner, res) = match fut.as_mut().poll(cx) {
-            std::task::Poll::Ready(res) => res,
-            std::task::Poll::Pending => {
-                return (std::task::Poll::Pending, EmptyResultState::Pending(fut));
+            Poll::Ready(res) => res,
+            Poll::Pending => {
+                return (Poll::Pending, EmptyResultState::Pending(fut));
             }
         };
 
@@ -71,18 +71,19 @@ where
     W: AsyncAsyncWrite + Unpin + Send + 'static,
 {
     fn poll_write(
-        mut self: std::pin::Pin<&mut Self>,
+        self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
         buf: &[u8],
-    ) -> std::task::Poll<Result<usize, io::Error>> {
-        let state = self.deref_mut().write_state.take().unwrap();
+    ) -> Poll<Result<usize, io::Error>> {
+        let this = self.get_mut();
 
         // Get or create a future
+        let state = this.write_state.take().unwrap();
         let mut fut = match state {
             WriteState::Idle(mut internal_buf) => {
                 internal_buf.clear();
                 internal_buf.extend_from_slice(buf);
-                let mut inner = self.inner.take().unwrap();
+                let mut inner = this.inner.take().unwrap();
 
                 let fut = async move {
                     let res = inner.write(&internal_buf).await;
@@ -95,29 +96,30 @@ where
 
         // Poll the future
         let (inner, internal_buf, res) = match fut.as_mut().poll(cx) {
-            std::task::Poll::Ready(res) => res,
-            std::task::Poll::Pending => {
-                self.deref_mut().write_state = Some(WriteState::Pending(fut));
-                return std::task::Poll::Pending;
+            Poll::Ready(res) => res,
+            Poll::Pending => {
+                this.write_state = Some(WriteState::Pending(fut));
+                return Poll::Pending;
             }
         };
 
         // Update state
-        self.deref_mut().write_state = Some(WriteState::Idle(internal_buf));
-        self.inner = Some(inner);
+        this.write_state = Some(WriteState::Idle(internal_buf));
+        this.inner = Some(inner);
         Ok(res?).into()
     }
 
     fn poll_flush(
-        mut self: std::pin::Pin<&mut Self>,
+        self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<Result<(), io::Error>> {
-        let state = self.deref_mut().flush_state.take().unwrap();
+    ) -> Poll<Result<(), io::Error>> {
+        let this = self.get_mut();
 
         // Get or create a future
+        let state = this.flush_state.take().unwrap();
         let fut = match state {
             EmptyResultState::Idle => {
-                let mut inner = self.inner.take().unwrap();
+                let mut inner = this.inner.take().unwrap();
 
                 let fut = async move {
                     let res = inner.flush().await;
@@ -130,21 +132,22 @@ where
 
         // Poll the future
         // Update state
-        let (res, state) = self.as_mut().poll_empty_result_state(cx, fut);
-        self.deref_mut().flush_state = Some(state);
+        let (res, state) = this.poll_empty_result_state(cx, fut);
+        this.flush_state = Some(state);
         res
     }
 
     fn poll_shutdown(
-        mut self: std::pin::Pin<&mut Self>,
+        self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<Result<(), io::Error>> {
-        let state = self.deref_mut().shutdown_state.take().unwrap();
+    ) -> Poll<Result<(), io::Error>> {
+        let this = self.get_mut();
 
         // Get or create a future
+        let state = this.shutdown_state.take().unwrap();
         let fut = match state {
             EmptyResultState::Idle => {
-                let mut inner = self.inner.take().unwrap();
+                let mut inner = this.inner.take().unwrap();
 
                 let fut = async move {
                     let res = inner.shutdown().await;
@@ -157,8 +160,8 @@ where
 
         // Poll the future
         // Update state
-        let (res, state) = self.as_mut().poll_empty_result_state(cx, fut);
-        self.deref_mut().shutdown_state = Some(state);
+        let (res, state) = this.poll_empty_result_state(cx, fut);
+        this.shutdown_state = Some(state);
         res
     }
 }

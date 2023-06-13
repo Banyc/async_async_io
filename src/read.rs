@@ -1,4 +1,4 @@
-use std::{io, ops::DerefMut};
+use std::{io, task::Poll};
 
 use async_trait::async_trait;
 use futures_core::future::BoxFuture;
@@ -39,15 +39,16 @@ where
     R: AsyncAsyncRead + Unpin + Send + 'static,
 {
     fn poll_read(
-        mut self: std::pin::Pin<&mut Self>,
+        self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
         buf: &mut tokio::io::ReadBuf<'_>,
-    ) -> std::task::Poll<std::io::Result<()>> {
+    ) -> Poll<std::io::Result<()>> {
         // ref: <https://fasterthanli.me/articles/surviving-rust-async-interfaces>
 
-        let state = self.deref_mut().state.take().unwrap();
+        let this = self.get_mut();
 
         // Get or create a future
+        let state = this.state.take().unwrap();
         let mut fut = match state {
             State::Idle(mut inner, mut internal_buf) => {
                 internal_buf.clear();
@@ -66,10 +67,10 @@ where
 
         // Poll the future
         let (inner, internal_buf, res) = match fut.as_mut().poll(cx) {
-            std::task::Poll::Ready(res) => res,
-            std::task::Poll::Pending => {
-                self.deref_mut().state = Some(State::Pending(fut));
-                return std::task::Poll::Pending;
+            Poll::Ready(res) => res,
+            Poll::Pending => {
+                this.state = Some(State::Pending(fut));
+                return Poll::Pending;
             }
         };
 
@@ -77,12 +78,12 @@ where
         let len = match res {
             Ok(len) => len,
             Err(e) => {
-                self.deref_mut().state = Some(State::Idle(inner, internal_buf));
-                return std::task::Poll::Ready(Err(e));
+                this.state = Some(State::Idle(inner, internal_buf));
+                return Poll::Ready(Err(e));
             }
         };
         buf.put_slice(&internal_buf[..len]);
-        self.deref_mut().state = Some(State::Idle(inner, internal_buf));
+        this.state = Some(State::Idle(inner, internal_buf));
         Ok(()).into()
     }
 }
