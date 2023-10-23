@@ -44,6 +44,7 @@ pub trait AsyncAsyncWrite {
         'l0: 'async_trait;
 }
 
+#[derive(Debug)]
 pub struct PollWrite<W> {
     inner: Option<W>,
     write_state: Option<WriteState<W>>,
@@ -51,6 +52,7 @@ pub struct PollWrite<W> {
     shutdown_state: Option<EmptyResultState<W>>,
 }
 
+#[derive(Debug)]
 enum WriteState<W> {
     Idle(Vec<u8>, Option<WriteBoxFuture<W>>),
     Pending(WriteBoxFuture<W>),
@@ -58,6 +60,7 @@ enum WriteState<W> {
 
 type WriteBoxFuture<W> = ReusableBoxFuture<(W, Vec<u8>, io::Result<usize>)>;
 
+#[derive(Debug)]
 enum EmptyResultState<W> {
     Idle(Option<EmptyResultBoxFuture<W>>),
     Pending(EmptyResultBoxFuture<W>),

@@ -1,6 +1,6 @@
 [package]
 name = "async_async_io"
-version = "0.1.4"
+version = "0.1.5"
 edition = "2021"
 description = "`AsyncRead`, `AsyncWrite` traits but with `async fn` methods."
 license = "MIT"

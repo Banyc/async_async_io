@@ -32,10 +32,12 @@ pub trait AsyncAsyncRead {
         'l1: 'async_trait;
 }
 
+#[derive(Debug)]
 pub struct PollRead<R> {
     state: Option<State<R>>,
 }
 
+#[derive(Debug)]
 enum State<R> {
     Idle(R, Vec<u8>, Option<BoxFuture<R>>),
     Pending(BoxFuture<R>),

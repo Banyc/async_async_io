@@ -11,6 +11,7 @@ use write::{AsyncAsyncWrite, PollWrite};
 pub mod read;
 pub mod write;
 
+#[derive(Debug)]
 pub struct PollIo<R, W> {
     read: PollRead<R>,
     write: PollWrite<W>,
