@@ -78,6 +78,14 @@ impl<W> PollWrite<W> {
     pub fn into_inner(self) -> W {
         self.inner.unwrap()
     }
+
+    pub fn inner(&self) -> &W {
+        self.inner.as_ref().unwrap()
+    }
+
+    pub fn inner_mut(&mut self) -> &mut W {
+        self.inner.as_mut().unwrap()
+    }
 }
 
 impl<W> PollWrite<W>

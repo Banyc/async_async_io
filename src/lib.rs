@@ -24,6 +24,14 @@ impl<R, W> PollIo<R, W> {
     pub fn into_split(self) -> (PollRead<R>, PollWrite<W>) {
         (self.read, self.write)
     }
+
+    pub fn split(&self) -> (&PollRead<R>, &PollWrite<W>) {
+        (&self.read, &self.write)
+    }
+
+    pub fn split_mut(&mut self) -> (&mut PollRead<R>, &mut PollWrite<W>) {
+        (&mut self.read, &mut self.write)
+    }
 }
 
 impl<R, W> AsyncRead for PollIo<R, W>

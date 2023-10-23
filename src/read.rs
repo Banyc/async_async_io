@@ -56,6 +56,20 @@ impl<R> PollRead<R> {
             State::Pending(_) => panic!(),
         }
     }
+
+    pub fn inner(&self) -> &R {
+        match self.state.as_ref().unwrap() {
+            State::Idle(inner, _, _) => inner,
+            State::Pending(_) => panic!(),
+        }
+    }
+
+    pub fn inner_mut(&mut self) -> &mut R {
+        match self.state.as_mut().unwrap() {
+            State::Idle(inner, _, _) => inner,
+            State::Pending(_) => panic!(),
+        }
+    }
 }
 
 impl<R> AsyncRead for PollRead<R>
