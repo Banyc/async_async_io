@@ -5,18 +5,18 @@ use tokio::io::AsyncRead;
 
 use crate::box_fut;
 
-#[cfg(not(feature = "no-async-trait"))]
-use async_trait::async_trait;
-#[cfg(not(feature = "no-async-trait"))]
-#[async_trait]
+#[cfg(not(feature = "impl_trait_in_assoc_type"))]
 pub trait AsyncAsyncRead {
     /// `buf` has a capacity. Don't read more than that.
-    async fn read(&mut self, buf: &mut [u8]) -> io::Result<usize>;
+    fn read(
+        &mut self,
+        buf: &mut [u8],
+    ) -> impl std::future::Future<Output = io::Result<usize>> + Send;
 }
 
-#[cfg(feature = "no-async-trait")]
+#[cfg(feature = "impl_trait_in_assoc_type")]
 use futures_core::Future;
-#[cfg(feature = "no-async-trait")]
+#[cfg(feature = "impl_trait_in_assoc_type")]
 pub trait AsyncAsyncRead {
     type ReadFuture<'async_trait>: Future<Output = io::Result<usize>> + Send + 'async_trait
     where
@@ -151,8 +151,7 @@ mod tests {
         }
     }
 
-    #[cfg(not(feature = "no-async-trait"))]
-    #[async_trait]
+    #[cfg(not(feature = "impl_trait_in_assoc_type"))]
     impl AsyncAsyncRead for AsyncReadBytes {
         async fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
             let len = std::io::Read::read(&mut self.reader, buf)?;
@@ -161,7 +160,7 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "no-async-trait")]
+    #[cfg(feature = "impl_trait_in_assoc_type")]
     impl AsyncAsyncRead for AsyncReadBytes {
         type ReadFuture<'async_trait> = impl Future<Output = io::Result<usize>> + Send + 'async_trait
         where

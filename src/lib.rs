@@ -1,4 +1,7 @@
-#![cfg_attr(feature = "no-async-trait", feature(impl_trait_in_assoc_type))]
+#![cfg_attr(
+    feature = "impl_trait_in_assoc_type",
+    feature(impl_trait_in_assoc_type)
+)]
 
 use std::pin::Pin;
 

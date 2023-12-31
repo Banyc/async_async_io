@@ -5,19 +5,16 @@ use tokio::io::AsyncWrite;
 
 use crate::box_fut;
 
-#[cfg(not(feature = "no-async-trait"))]
-use async_trait::async_trait;
-#[cfg(not(feature = "no-async-trait"))]
-#[async_trait]
+#[cfg(not(feature = "impl_trait_in_assoc_type"))]
 pub trait AsyncAsyncWrite {
-    async fn write(&mut self, buf: &[u8]) -> io::Result<usize>;
-    async fn flush(&mut self) -> io::Result<()>;
-    async fn shutdown(&mut self) -> io::Result<()>;
+    fn write(&mut self, buf: &[u8]) -> impl std::future::Future<Output = io::Result<usize>> + Send;
+    fn flush(&mut self) -> impl std::future::Future<Output = io::Result<()>> + Send;
+    fn shutdown(&mut self) -> impl std::future::Future<Output = io::Result<()>> + Send;
 }
 
-#[cfg(feature = "no-async-trait")]
+#[cfg(feature = "impl_trait_in_assoc_type")]
 use futures_core::Future;
-#[cfg(feature = "no-async-trait")]
+#[cfg(feature = "impl_trait_in_assoc_type")]
 pub trait AsyncAsyncWrite {
     type WriteFuture<'async_trait>: Future<Output = io::Result<usize>> + Send + 'async_trait
     where
@@ -235,8 +232,7 @@ mod tests {
         }
     }
 
-    #[cfg(not(feature = "no-async-trait"))]
-    #[async_trait]
+    #[cfg(not(feature = "impl_trait_in_assoc_type"))]
     impl AsyncAsyncWrite for AsyncWriteBytes {
         async fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
             print!("{}.", buf.len());
@@ -252,7 +248,7 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "no-async-trait")]
+    #[cfg(feature = "impl_trait_in_assoc_type")]
     impl AsyncAsyncWrite for AsyncWriteBytes {
         type WriteFuture<'async_trait> = impl Future<Output = io::Result<usize>> + Send + 'async_trait
         where

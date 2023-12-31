@@ -2,10 +2,10 @@
 
 Currently, only for `tokio`.
 
-To get rid of the `Box` in the async trait calls:
+## `impl_trait_in_assoc_type` (Optional)
 
 - use nightly channel;
-- enable the feature `"no-async-trait"`;
+- enable the feature `"impl_trait_in_assoc_type"`;
 - look into the tests in `src/read.rs` and `src/write.rs` to see how to implement the traits.
 
 ## Usage
@@ -19,7 +19,6 @@ pub struct AsyncReadBytes {
     reader: io::Cursor<Vec<u8>>,
 }
 
-#[async_trait]
 impl AsyncAsyncRead for AsyncReadBytes {
     async fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         let len = std::io::Read::read(&mut self.reader, buf)?;
@@ -49,7 +48,6 @@ pub struct AsyncWriteBytes {
     writer: Vec<u8>,
 }
 
-#[async_trait]
 impl AsyncAsyncWrite for AsyncWriteBytes {
     async fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         print!("{}.", buf.len());
