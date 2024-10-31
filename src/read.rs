@@ -198,6 +198,10 @@ mod tests {
         let mut writer = [0; 5];
         poll_read.read_exact(&mut writer).await.unwrap();
         assert_eq!(&writer, b"world");
+
+        let mut writer = [0; 1];
+        let n = poll_read.read(&mut writer).await.unwrap();
+        assert_eq!(n, 0);
     }
 
     #[tokio::test]

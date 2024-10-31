@@ -1,4 +1,7 @@
-use std::{io, task::Poll};
+use std::{
+    io,
+    task::{Poll, Waker},
+};
 
 use reusable_box_future::ReusableBoxFuture;
 use tokio::io::AsyncWrite;
@@ -45,8 +48,11 @@ pub trait AsyncAsyncWrite {
 pub struct PollWrite<W> {
     inner: Option<W>,
     write_state: Option<WriteState<W>>,
+    write_waker: Option<Waker>,
     flush_state: Option<EmptyResultState<W>>,
+    flush_waker: Option<Waker>,
     shutdown_state: Option<EmptyResultState<W>>,
+    shutdown_waker: Option<Waker>,
 }
 
 #[derive(Debug)]
@@ -70,8 +76,11 @@ impl<W> PollWrite<W> {
         Self {
             inner: Some(write),
             write_state: Some(WriteState::Idle(Vec::new(), None)),
+            write_waker: None,
             flush_state: Some(EmptyResultState::Idle(None)),
+            flush_waker: None,
             shutdown_state: Some(EmptyResultState::Idle(None)),
+            shutdown_waker: None,
         }
     }
 
@@ -85,6 +94,18 @@ impl<W> PollWrite<W> {
 
     pub fn inner_mut(&mut self) -> &mut W {
         self.inner.as_mut().unwrap()
+    }
+
+    fn wake_all(&mut self) {
+        if let Some(waker) = self.write_waker.take() {
+            waker.wake();
+        }
+        if let Some(waker) = self.flush_waker.take() {
+            waker.wake();
+        }
+        if let Some(waker) = self.shutdown_waker.take() {
+            waker.wake();
+        }
     }
 }
 
@@ -107,6 +128,7 @@ where
 
         // Update state
         self.inner = Some(inner);
+        self.wake_all();
         (Poll::Ready(res), EmptyResultState::Idle(Some(fut)))
     }
 }
@@ -126,9 +148,13 @@ where
         let state = this.write_state.take().unwrap();
         let mut fut = match state {
             WriteState::Idle(mut internal_buf, fut_box) => {
+                let Some(mut inner) = this.inner.take() else {
+                    this.write_state = Some(WriteState::Idle(internal_buf, fut_box));
+                    this.write_waker = Some(cx.waker().clone());
+                    return Poll::Pending;
+                };
                 internal_buf.clear();
-                internal_buf.extend_from_slice(buf);
-                let mut inner = this.inner.take().unwrap();
+                internal_buf.extend(buf);
 
                 let fut = async move {
                     let res = inner.write(&internal_buf).await;
@@ -151,6 +177,7 @@ where
         // Update state
         this.write_state = Some(WriteState::Idle(internal_buf, Some(fut)));
         this.inner = Some(inner);
+        this.wake_all();
         Ok(res?).into()
     }
 
@@ -164,7 +191,11 @@ where
         let state = this.flush_state.take().unwrap();
         let fut = match state {
             EmptyResultState::Idle(fut_box) => {
-                let mut inner = this.inner.take().unwrap();
+                let Some(mut inner) = this.inner.take() else {
+                    this.flush_state = Some(EmptyResultState::Idle(fut_box));
+                    this.flush_waker = Some(cx.waker().clone());
+                    return Poll::Pending;
+                };
 
                 let fut = async move {
                     let res = inner.flush().await;
@@ -192,7 +223,11 @@ where
         let state = this.shutdown_state.take().unwrap();
         let fut = match state {
             EmptyResultState::Idle(fut_box) => {
-                let mut inner = this.inner.take().unwrap();
+                let Some(mut inner) = this.inner.take() else {
+                    this.shutdown_state = Some(EmptyResultState::Idle(fut_box));
+                    this.shutdown_waker = Some(cx.waker().clone());
+                    return Poll::Pending;
+                };
 
                 let fut = async move {
                     let res = inner.shutdown().await;
@@ -250,13 +285,16 @@ mod tests {
 
     #[cfg(feature = "impl_trait_in_assoc_type")]
     impl AsyncAsyncWrite for AsyncWriteBytes {
-        type WriteFuture<'async_trait> = impl Future<Output = io::Result<usize>> + Send + 'async_trait
+        type WriteFuture<'async_trait>
+            = impl Future<Output = io::Result<usize>> + Send + 'async_trait
         where
             Self: 'async_trait;
-        type FlushFuture<'async_trait> = impl Future<Output = io::Result<()>> + Send + 'async_trait
+        type FlushFuture<'async_trait>
+            = impl Future<Output = io::Result<()>> + Send + 'async_trait
         where
             Self: 'async_trait;
-        type ShutdownFuture<'async_trait> = impl Future<Output = io::Result<()>> + Send + 'async_trait
+        type ShutdownFuture<'async_trait>
+            = impl Future<Output = io::Result<()>> + Send + 'async_trait
         where
             Self: 'async_trait;
 
