@@ -91,16 +91,14 @@ where
         let state = this.state.take().unwrap();
         let mut fut = match state {
             State::Idle(mut inner, mut internal_buf, fut_box) => {
-                internal_buf.clear();
-                let max_len = buf.remaining();
-                let additional_cap = max_len.saturating_sub(internal_buf.capacity());
-                if additional_cap > 0 {
-                    internal_buf.reserve(additional_cap);
+                let buf_len = buf.remaining();
+                let additional_bytes = buf_len.saturating_sub(internal_buf.len());
+                if additional_bytes != 0 {
+                    internal_buf.extend((0..additional_bytes).map(|_| 0));
                 }
-                internal_buf.resize(max_len, 0);
 
                 let fut = async move {
-                    let res = inner.read(&mut internal_buf[..max_len]).await;
+                    let res = inner.read(&mut internal_buf[..buf_len]).await;
                     (inner, internal_buf, res)
                 };
                 box_fut(fut, fut_box)
@@ -133,7 +131,6 @@ where
 
 #[cfg(test)]
 mod tests {
-
     use rand::RngCore;
     use tokio::io::AsyncReadExt;
 
