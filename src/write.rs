@@ -1,7 +1,9 @@
-use std::{
-    io,
-    task::{Poll, Waker},
+use core::{
+    future::Future,
+    pin::Pin,
+    task::{Context, Poll, Waker},
 };
+use std::io;
 
 use reusable_box_future::ReusableBoxFuture;
 use tokio::io::AsyncWrite;
@@ -10,13 +12,11 @@ use crate::box_fut;
 
 #[cfg(not(feature = "impl_trait_in_assoc_type"))]
 pub trait AsyncAsyncWrite {
-    fn write(&mut self, buf: &[u8]) -> impl std::future::Future<Output = io::Result<usize>> + Send;
-    fn flush(&mut self) -> impl std::future::Future<Output = io::Result<()>> + Send;
-    fn shutdown(&mut self) -> impl std::future::Future<Output = io::Result<()>> + Send;
+    fn write(&mut self, buf: &[u8]) -> impl Future<Output = io::Result<usize>> + Send;
+    fn flush(&mut self) -> impl Future<Output = io::Result<()>> + Send;
+    fn shutdown(&mut self) -> impl Future<Output = io::Result<()>> + Send;
 }
 
-#[cfg(feature = "impl_trait_in_assoc_type")]
-use futures_core::Future;
 #[cfg(feature = "impl_trait_in_assoc_type")]
 pub trait AsyncAsyncWrite {
     type WriteFuture<'async_trait>: Future<Output = io::Result<usize>> + Send + 'async_trait
@@ -48,11 +48,11 @@ pub trait AsyncAsyncWrite {
 pub struct PollWrite<W> {
     inner: Option<W>,
     write_state: Option<WriteState<W>>,
-    write_waker: Option<Waker>,
+    write_waker: OptionalWaker,
     flush_state: Option<EmptyResultState<W>>,
-    flush_waker: Option<Waker>,
+    flush_waker: OptionalWaker,
     shutdown_state: Option<EmptyResultState<W>>,
-    shutdown_waker: Option<Waker>,
+    shutdown_waker: OptionalWaker,
 }
 
 #[derive(Debug)]
@@ -76,36 +76,27 @@ impl<W> PollWrite<W> {
         Self {
             inner: Some(write),
             write_state: Some(WriteState::Idle(Vec::new(), None)),
-            write_waker: None,
+            write_waker: OptionalWaker::new(),
             flush_state: Some(EmptyResultState::Idle(None)),
-            flush_waker: None,
+            flush_waker: OptionalWaker::new(),
             shutdown_state: Some(EmptyResultState::Idle(None)),
-            shutdown_waker: None,
+            shutdown_waker: OptionalWaker::new(),
         }
     }
-
     pub fn into_inner(self) -> W {
         self.inner.unwrap()
     }
-
     pub fn inner(&self) -> &W {
         self.inner.as_ref().unwrap()
     }
-
     pub fn inner_mut(&mut self) -> &mut W {
         self.inner.as_mut().unwrap()
     }
 
     fn wake_all(&mut self) {
-        if let Some(waker) = self.write_waker.take() {
-            waker.wake();
-        }
-        if let Some(waker) = self.flush_waker.take() {
-            waker.wake();
-        }
-        if let Some(waker) = self.shutdown_waker.take() {
-            waker.wake();
-        }
+        self.write_waker.wake();
+        self.flush_waker.wake();
+        self.shutdown_waker.wake();
     }
 }
 
@@ -115,7 +106,7 @@ where
 {
     fn poll_empty_result_state(
         &mut self,
-        cx: &mut std::task::Context<'_>,
+        cx: &mut Context<'_>,
         mut fut: EmptyResultBoxFuture<W>,
     ) -> (Poll<Result<(), io::Error>>, EmptyResultState<W>) {
         // Poll the future
@@ -138,8 +129,8 @@ where
     W: AsyncAsyncWrite + Unpin + Send + 'static,
 {
     fn poll_write(
-        self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
         buf: &[u8],
     ) -> Poll<Result<usize, io::Error>> {
         let this = self.get_mut();
@@ -150,7 +141,7 @@ where
             WriteState::Idle(mut internal_buf, fut_box) => {
                 let Some(mut inner) = this.inner.take() else {
                     this.write_state = Some(WriteState::Idle(internal_buf, fut_box));
-                    this.write_waker = Some(cx.waker().clone());
+                    this.write_waker.set(cx.waker());
                     return Poll::Pending;
                 };
                 internal_buf.clear();
@@ -181,10 +172,7 @@ where
         Ok(res?).into()
     }
 
-    fn poll_flush(
-        self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> Poll<Result<(), io::Error>> {
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), io::Error>> {
         let this = self.get_mut();
 
         // Get or create a future
@@ -193,7 +181,7 @@ where
             EmptyResultState::Idle(fut_box) => {
                 let Some(mut inner) = this.inner.take() else {
                     this.flush_state = Some(EmptyResultState::Idle(fut_box));
-                    this.flush_waker = Some(cx.waker().clone());
+                    this.flush_waker.set(cx.waker());
                     return Poll::Pending;
                 };
 
@@ -213,10 +201,7 @@ where
         res
     }
 
-    fn poll_shutdown(
-        self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> Poll<Result<(), io::Error>> {
+    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), io::Error>> {
         let this = self.get_mut();
 
         // Get or create a future
@@ -225,7 +210,7 @@ where
             EmptyResultState::Idle(fut_box) => {
                 let Some(mut inner) = this.inner.take() else {
                     this.shutdown_state = Some(EmptyResultState::Idle(fut_box));
-                    this.shutdown_waker = Some(cx.waker().clone());
+                    this.shutdown_waker.set(cx.waker());
                     return Poll::Pending;
                 };
 
@@ -243,6 +228,28 @@ where
         let (res, state) = this.poll_empty_result_state(cx, fut);
         this.shutdown_state = Some(state);
         res
+    }
+}
+
+#[derive(Debug)]
+struct OptionalWaker {
+    waker: Option<Waker>,
+}
+impl OptionalWaker {
+    pub fn new() -> Self {
+        Self { waker: None }
+    }
+    pub fn set(&mut self, new_waker: &Waker) {
+        match &mut self.waker {
+            Some(waker) => waker.clone_from(new_waker),
+            None => self.waker = Some(new_waker.clone()),
+        }
+    }
+    pub fn wake(&mut self) {
+        let Some(waker) = self.waker.take() else {
+            return;
+        };
+        waker.wake();
     }
 }
 
@@ -271,11 +278,11 @@ mod tests {
     impl AsyncAsyncWrite for AsyncWriteBytes {
         async fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
             print!("{}.", buf.len());
-            std::io::Write::write(&mut self.writer, buf)
+            io::Write::write(&mut self.writer, buf)
         }
 
         async fn flush(&mut self) -> io::Result<()> {
-            std::io::Write::flush(&mut self.writer)
+            io::Write::flush(&mut self.writer)
         }
 
         async fn shutdown(&mut self) -> io::Result<()> {
@@ -308,7 +315,7 @@ mod tests {
         {
             async move {
                 print!("{}.", buf.len());
-                std::io::Write::write(&mut self.writer, buf)
+                io::Write::write(&mut self.writer, buf)
             }
         }
 
@@ -316,7 +323,7 @@ mod tests {
         where
             'l0: 'async_trait,
         {
-            async move { std::io::Write::flush(&mut self.writer) }
+            async move { io::Write::flush(&mut self.writer) }
         }
 
         fn shutdown<'l0, 'async_trait>(&'l0 mut self) -> Self::ShutdownFuture<'async_trait>

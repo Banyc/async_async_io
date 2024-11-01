@@ -1,4 +1,9 @@
-use std::{io, task::Poll};
+use core::{
+    future::Future,
+    pin::Pin,
+    task::{Context, Poll},
+};
+use std::io;
 
 use reusable_box_future::ReusableBoxFuture;
 use tokio::io::AsyncRead;
@@ -8,14 +13,9 @@ use crate::box_fut;
 #[cfg(not(feature = "impl_trait_in_assoc_type"))]
 pub trait AsyncAsyncRead {
     /// `buf` has a capacity. Don't read more than that.
-    fn read(
-        &mut self,
-        buf: &mut [u8],
-    ) -> impl std::future::Future<Output = io::Result<usize>> + Send;
+    fn read(&mut self, buf: &mut [u8]) -> impl Future<Output = io::Result<usize>> + Send;
 }
 
-#[cfg(feature = "impl_trait_in_assoc_type")]
-use futures_core::Future;
 #[cfg(feature = "impl_trait_in_assoc_type")]
 pub trait AsyncAsyncRead {
     type ReadFuture<'async_trait>: Future<Output = io::Result<usize>> + Send + 'async_trait
@@ -79,10 +79,10 @@ where
     R: AsyncAsyncRead + Unpin + Send + 'static,
 {
     fn poll_read(
-        self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
         buf: &mut tokio::io::ReadBuf<'_>,
-    ) -> Poll<std::io::Result<()>> {
+    ) -> Poll<io::Result<()>> {
         // ref: <https://fasterthanli.me/articles/surviving-rust-async-interfaces>
 
         let this = self.get_mut();
@@ -154,7 +154,7 @@ mod tests {
     #[cfg(not(feature = "impl_trait_in_assoc_type"))]
     impl AsyncAsyncRead for AsyncReadBytes {
         async fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-            let len = std::io::Read::read(&mut self.reader, buf)?;
+            let len = io::Read::read(&mut self.reader, buf)?;
             print!("{}.", len);
             Ok(len)
         }
@@ -162,7 +162,8 @@ mod tests {
 
     #[cfg(feature = "impl_trait_in_assoc_type")]
     impl AsyncAsyncRead for AsyncReadBytes {
-        type ReadFuture<'async_trait> = impl Future<Output = io::Result<usize>> + Send + 'async_trait
+        type ReadFuture<'async_trait>
+            = impl Future<Output = io::Result<usize>> + Send + 'async_trait
         where
             Self: 'async_trait;
 
@@ -175,7 +176,7 @@ mod tests {
             'l1: 'async_trait,
         {
             async move {
-                let len = std::io::Read::read(&mut self.reader, buf)?;
+                let len = io::Read::read(&mut self.reader, buf)?;
                 print!("{}.", len);
                 Ok(len)
             }

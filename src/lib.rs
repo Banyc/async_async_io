@@ -3,9 +3,13 @@
     feature(impl_trait_in_assoc_type)
 )]
 
-use std::pin::Pin;
+use core::{
+    future::Future,
+    pin::Pin,
+    task::{Context, Poll},
+};
+use std::io;
 
-use futures_core::Future;
 use read::{AsyncAsyncRead, PollRead};
 use reusable_box_future::ReusableBoxFuture;
 use tokio::io::{AsyncRead, AsyncWrite};
@@ -45,9 +49,9 @@ where
 {
     fn poll_read(
         self: Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
+        cx: &mut Context<'_>,
         buf: &mut tokio::io::ReadBuf<'_>,
-    ) -> std::task::Poll<std::io::Result<()>> {
+    ) -> Poll<io::Result<()>> {
         Pin::new(&mut self.get_mut().read).poll_read(cx, buf)
     }
 }
@@ -58,24 +62,18 @@ where
     W: AsyncAsyncWrite + Unpin + Send + 'static,
 {
     fn poll_write(
-        self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
         buf: &[u8],
-    ) -> std::task::Poll<Result<usize, std::io::Error>> {
+    ) -> Poll<Result<usize, io::Error>> {
         Pin::new(&mut self.get_mut().write).poll_write(cx, buf)
     }
 
-    fn poll_flush(
-        self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<Result<(), std::io::Error>> {
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), io::Error>> {
         Pin::new(&mut self.get_mut().write).poll_flush(cx)
     }
 
-    fn poll_shutdown(
-        self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<Result<(), std::io::Error>> {
+    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), io::Error>> {
         Pin::new(&mut self.get_mut().write).poll_shutdown(cx)
     }
 }
